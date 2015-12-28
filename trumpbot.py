@@ -1,38 +1,49 @@
 # -*- coding: UTF-8 -*-
-'''Example script to generate text from Nietzsche's writings.
-
-At least 20 epochs are required before the generated text
-starts sounding coherent.
-
-It is recommended to run this script on GPU, as recurrent
-networks are quite computationally intensive.
-
-If you try this script on new data, make sure your corpus
-has at least ~100k characters. ~1M is better.
-'''
 
 from __future__ import print_function
 from keras.models import Sequential
-from keras.layers.core import Dense, Activation, Dropout, TimeDistributedDense
+from keras.layers.core import Dense, Activation, Dropout, TimeDistributedDense, Masking
 from keras.layers.advanced_activations import ELU
 from keras.layers.recurrent import LSTM
+from keras.layers.normalization import BatchNormalization
 from keras.layers.embeddings import Embedding
 from keras.datasets.data_utils import get_file
+from keras.preprocessing.sequence import pad_sequences
+import gensim as gs
 import numpy as np
 import random
 import os
 import sys
 
-text = open('source.txt').read().lower()
-text = text.replace("!", " [xcm] ")
-text = text.replace(".", " [dot] ")
-text = text.replace(",", " [comma] ")
-text = text.replace("?", " [q] ")
-text = text.replace("$", " [dlr] ")
-text = text.replace(":", " [cln] ")
-text = text.replace(";", " [scln] ")
-text = text.replace("%", " [pcnt] ")
-text = text.replace("-", " [dsh]")
+text = open('fuckface.txt').read().lower()
+#fix misspellings, abbrvs and other trumpisms
+text = text.replace(" - ", ", ")
+text = text.replace(" t ", " to ")
+text = text.replace(" st. louis ", " st louis ")
+text = text.replace(" mr. ", " mister ")
+text = text.replace(" mrs. ", " mistress ")
+text = text.replace(" ms. ", " miss ")
+text = text.replace(" feb. ", " february ")
+text = text.replace(" dr. ", " doctor ")
+text = text.replace(" gen. ", " general ")
+text = text.replace(" gov. ", " governor ")
+text = text.replace(" sen. ", " senator ")
+text = text.replace(" sgt. ", " sergeant ")
+text = text.replace(" rev. ", " reverend ")
+text = text.replace(". no. ", ". number ")
+text = text.replace(" jr. ", " junior ")
+
+text = text.replace(".. ", ". ")
+text = text.replace("penn.", "pennsylvania")
+text = text.replace("wit-", "wit,")
+text = text.replace("! ", " [xcm] ")
+text = text.replace(". ", " [dot] ")
+text = text.replace("? ", " [q] ")
+text = text.replace(", ", " [comma] ")
+text = text.replace(" $", " [dlr] ")
+text = text.replace(": ", " [cln] ")
+text = text.replace("; ", " [scln] ")
+text = text.replace("% ", " [pcnt] ")
 text = text.replace("   ", " ")
 text = text.replace("  ", " ")
 parsedWords = text.split(" ")
@@ -49,24 +60,18 @@ for word in parsedWords:
 print('corpus length:', len(wordCoding))
 print('Vectorization...')
 
-embed_dim = 1000
-lstm_hdim = 2000
+vmodel = gs.models.Word2Vec.load('trump2vec')
 
-sd_len = 6
+input_dim = 300
+lstm_hdim = 600
+sd_len = 8
 
 batch_size = 256
 sd_size = int(len(codedVector) / sd_len)
-x_A = []
-y_A = []
 
-x_B = []
-y_B = []
-
-x_C = []
-y_C = []
-
-x_D = []
-y_D = []
+x_D = []# np.zeros((sc_size * sc_len, sc_len))
+y_D = []# np.zeros((sc_size * sc_len, len(wordCoding)))
+i_D = []
 
 def one_hot(index):
     retVal = np.zeros((len(wordCoding)), dtype=np.bool)
@@ -75,49 +80,31 @@ def one_hot(index):
 
 for idx in range(0, sd_size - 1):
     for iidx in range(0, sd_len - 1):
-        vectorValD = codedVector[idx * sd_len + iidx + 0:(idx + 1) * sd_len + iidx]
+        vectorValD = [vmodel[myWord] for myWord in parsedWords[idx * sd_len + iidx + 0:(idx + 1) * sd_len + iidx]]
         x_D.append(vectorValD)
         y_D.append(one_hot(codedVector[(idx + 1) * sd_len + iidx]))
 
-        vectorValA = codedVector[idx * sd_len + iidx + 1:(idx + 1) * sd_len + iidx]
-        x_A.append(vectorValA)
-        y_A.append(one_hot(codedVector[(idx + 1) * sd_len + iidx]))
-
-        vectorValB = codedVector[idx * sd_len + iidx + 2:(idx + 1) * sd_len + iidx]
-        x_B.append(vectorValB)
-        y_B.append(one_hot(codedVector[(idx + 1) * sd_len + iidx]))
-
-        vectorValC = codedVector[idx * sd_len + iidx + 3:(idx + 1) * sd_len + iidx]
-        x_C.append(vectorValC)
-        y_C.append(one_hot(codedVector[(idx + 1) * sd_len + iidx]))
-
 x_D = np.asarray(x_D)
 y_D = np.asarray(y_D)
-
-x_A = np.asarray(x_A)
-y_A = np.asarray(y_A)
-
-x_B = np.asarray(x_B)
-y_B = np.asarray(y_B)
-
-x_C = np.asarray(x_C)
-y_C = np.asarray(y_C)
+i_D = np.asarray(i_D)
 
 # build the model: 2 stacked LSTM
-print('shapes: ' + str((x_A.shape, x_B.shape, x_C.shape, x_D.shape, x_E.shape, x_F.shape)))
+print('shapes: ' + str((x_D.shape)))
 print('Build model...')
 model = Sequential()
-model.add(Embedding(input_dim=len(wordCoding), output_dim=lstm_hdim, mask_zero=True, input_length=sd_len))
+model.add(TimeDistributedDense(input_dim=input_dim, output_dim=lstm_hdim, input_length=sd_len))
+model.add(BatchNormalization())
 model.add(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=True))
+model.add(BatchNormalization())
+model.add(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=True))
+model.add(BatchNormalization())
 model.add(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=False))
+model.add(BatchNormalization())
 model.add(Dropout(0.2))
-model.add(Dense(input_dim=lstm_hdim, output_dim=lstm_hdim + 300))
+model.add(Dense(input_dim=lstm_hdim, output_dim=lstm_hdim + 1000))
 model.add(ELU())
-model.add(Dropout(0.1))
-model.add(Dense(input_dim=lstm_hdim + 300, output_dim=lstm_hdim + 600))
-model.add(ELU())
-model.add(Dropout(0.1))
-model.add(Dense(input_dim=lstm_hdim + 600, output_dim=len(wordCoding)))
+model.add(Dropout(0.2))
+model.add(Dense(input_dim=lstm_hdim + 1000, output_dim=len(wordCoding)))
 model.add(Activation('softmax'))
 
 model.compile(loss='categorical_crossentropy', optimizer='rmsprop')
@@ -139,18 +126,16 @@ def get_sentence(wordVec):
 if os.path.isfile('tb-weights'):
     model.load_weights('tb-weights')
 
-for iteration in range(1, 40):
+for iteration in range(0, 50):
     print()
     print('-' * 50)
     print('Iteration', iteration)
     for k in range(5):
-        model.fit(x_A, y_A, batch_size=batch_size, nb_epoch=1, show_accuracy=True)
-        model.fit(x_B, y_B, batch_size=batch_size, nb_epoch=1, show_accuracy=True)
-        model.fit(x_C, y_C, batch_size=batch_size, nb_epoch=1, show_accuracy=True)
+        print('we at ' + str(k))
         model.fit(x_D, y_D, batch_size=batch_size, nb_epoch=1, show_accuracy=True)
     
     seedSelector = np.random.randint(0,3)
-    seedSrc = x_A if seedSelector == 0 else x_D if seedSelector == 1 else x_C
+    seedSrc = i_D
     seedLen = sd_len
     model.save_weights('tb-weights', overwrite=True)
     start_index = random.randint(0, len(seedSrc) - 1)
@@ -164,8 +149,11 @@ for iteration in range(1, 40):
         print('----- Generating with seed: "' + strSentence + '"')
 
         for iteration in range(500):
-
-            preds = model.predict(sentence, verbose=0)[0]
+            vecsentence = []
+            for vcode in sentence[0]:
+                vecsentence.append(vmodel[codedWord[vcode]])
+            vecsentence = np.reshape(vecsentence, (1, len(vecsentence), 300))
+            preds = model.predict(vecsentence, verbose=0)[0]
             next_index = sample(preds, diversity)
             if next_index in codedWord:
                 next_char = codedWord[next_index]

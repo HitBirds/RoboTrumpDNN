@@ -3,7 +3,7 @@
 ------------------
 *Disclaimer: This is not meant as a political analysis or opinion*
 
-Based on Andrej Karpathy's [article](http://karpathy.github.io/2015/05/21/rnn-effectiveness/) on text generation, I built a model for text generation in Keras. However, instead of using character-level input data, I instead use words Donald Trump uses in his speeches as the input, and feed it to an Embedding layer. His speeches contain ~50k words with a vocabulary of ~3k words. I picked Trump because the transcripts for his speeches are more readily available, and more organic because they are not scripted (to the best of my knowledge). However, because his speeches are stream of consciousness, he tends to repeat phrases over and over again, which sometimes cause the model to get stuck in a loop when generating them, although I'm not sure that's 100% correct.
+Based on Andrej Karpathy's [article](http://karpathy.github.io/2015/05/21/rnn-effectiveness/) on text generation, I built a model for text generation in Keras. However, instead of using character-level input data, I instead use words Donald Trump uses in his speeches, along with other Republican presidential nominees speeches into Word2Vec (interesting sidenote: if you use the same hyper-parameters and the same speech dictionary, the result of "Obama" - "Strength" analogy comparison results in "Hillary" or "Clinton"), and use Donald Trump's resulting word vectors as the input. His speeches contain ~100k words with a vocabulary of ~4k words. I picked Trump because the transcripts for his speeches are more readily available, and more organic because they are not scripted (to the best of my knowledge). However, because his speeches are stream of consciousness, he tends to repeat phrases over and over again, which sometimes cause the model to get stuck in a loop when generating them, although I'm not sure that's 100% correct.
 
 Nonetheless, I was able to get Donald Trump's speech transcripts since the beginning of his campaign from [what the folly](http://www.whatthefolly.com/). And I think the model is able to generate speeches that have...uh...Trumpian flavors?
 
@@ -24,12 +24,17 @@ You need the following dependencies:
 - numpy, scipy
 - pyyaml
 - HDF5 and h5py (optional, required if you use model saving/loading functions)
+- Gensim Word2Vec Library
 - Optional but recommended if you use CNNs: cuDNN.
 - Optional for clustering: SciKit Learn 
 
 ------------------
 
-You can change the source speech to whatever speeches you like to reproduce. To run the script, enter
+You can change the source speech and dictionary to whatever speeches you like to reproduce. But first you'd need to create new word vectors by running
+```
+python build-dictionary.py
+```
+To run the script, enter
 ```
 python trumpbot.py
 ```
