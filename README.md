@@ -1,4 +1,4 @@
-# RoboTrumpDNN: Generating Donald Trump Speeches with Dictionary Embedding and LSTM
+# RoboTrumpDNN: Generating Donald Trump Speeches with Word2Vec and LSTM
 
 ------------------
 *Disclaimer: This is not meant as a political analysis or opinion*
