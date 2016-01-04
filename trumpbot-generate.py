@@ -15,7 +15,7 @@ import random
 import os
 import sys
 
-text = open('fuckface.txt').read().lower()
+text = open('source.txt').read().lower()
 #fix misspellings, abbrvs and other trumpisms
 text = text.replace(" - ", ", ")
 text = text.replace(" t ", " to ")
