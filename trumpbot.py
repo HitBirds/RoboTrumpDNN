@@ -1,7 +1,18 @@
 # -*- coding: UTF-8 -*-
+'''Example script to generate text from Nietzsche's writings.
+
+At least 20 epochs are required before the generated text
+starts sounding coherent.
+
+It is recommended to run this script on GPU, as recurrent
+networks are quite computationally intensive.
+
+If you try this script on new data, make sure your corpus
+has at least ~100k characters. ~1M is better.
+'''
 
 from __future__ import print_function
-from keras.models import Sequential
+from keras.models import Graph
 from keras.layers.core import Dense, Activation, Dropout, TimeDistributedDense, Masking
 from keras.layers.advanced_activations import ELU
 from keras.layers.recurrent import LSTM
@@ -15,8 +26,9 @@ import random
 import os
 import sys
 
+vmodel = gs.models.Word2Vec.load('trump2vec')
+
 text = open('source.txt').read().lower()
-#fix misspellings, abbrvs and other trumpisms
 text = text.replace(" - ", ", ")
 text = text.replace(" t ", " to ")
 text = text.replace(" st. louis ", " st louis ")
@@ -51,26 +63,44 @@ wordCoding = {}
 codedWord = {}
 codeNum = 1
 codedVector = []
+vecValues = {}
 for word in parsedWords:
     if not word in wordCoding:
         wordCoding[word] = codeNum
         codedWord[codeNum] = word
         codeNum += 1
+        vecValues[word] = vmodel[word]
     codedVector.append(wordCoding[word])
 print('corpus length:', len(wordCoding))
 print('Vectorization...')
 
-vmodel = gs.models.Word2Vec.load('trump2vec')
+def normalizeVector(vecs):
+    retval = {}
+    tempval = []
+    for vkey in vecs:
+        tempval.append(vecs[vkey])
+    vecMean = np.mean(np.asarray(tempval), axis=0)
+    vecStd = np.std(np.asarray(tempval), axis=0)
+    for veckey in vecs:
+        retval[veckey] = (vecs[veckey] - vecMean) / vecStd
+    return retval
 
+#vecValues = normalizeVector(vecValues)
+print('normalized')
 input_dim = 300
-lstm_hdim = 600
-sd_len = 8
+lstm_hdim = 500
+bridge_dim = 1000
+dense_dim = 1500
+
+sd_len = 12
 
 batch_size = 256
+
 sd_size = int(len(codedVector) / sd_len)
 
-x_D = []# np.zeros((sc_size * sc_len, sc_len))
-y_D = []# np.zeros((sc_size * sc_len, len(wordCoding)))
+x_D = []
+y_D = []
+v_D = []
 i_D = []
 
 def one_hot(index):
@@ -80,34 +110,67 @@ def one_hot(index):
 
 for idx in range(0, sd_size - 1):
     for iidx in range(0, sd_len - 1):
-        vectorValD = [vmodel[myWord] for myWord in parsedWords[idx * sd_len + iidx + 0:(idx + 1) * sd_len + iidx]]
+        indexD = codedVector[idx * sd_len + iidx + 0:(idx + 1) * sd_len + iidx]
+        i_D.append(indexD)
+
+        vectorValD = [vecValues[myWord] for myWord in parsedWords[idx * sd_len + iidx + 0:(idx + 1) * sd_len + iidx]]
         x_D.append(vectorValD)
         y_D.append(one_hot(codedVector[(idx + 1) * sd_len + iidx]))
+        v_D.append(vecValues[parsedWords[(idx + 1) * sd_len + iidx]])
 
 x_D = np.asarray(x_D)
 y_D = np.asarray(y_D)
+v_D = np.asarray(v_D)
 i_D = np.asarray(i_D)
 
 # build the model: 2 stacked LSTM
 print('shapes: ' + str((x_D.shape)))
 print('Build model...')
-model = Sequential()
-model.add(TimeDistributedDense(input_dim=input_dim, output_dim=lstm_hdim, input_length=sd_len))
-model.add(BatchNormalization())
-model.add(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=True))
-model.add(BatchNormalization())
-model.add(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=True))
-model.add(BatchNormalization())
-model.add(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=False))
-model.add(BatchNormalization())
-model.add(Dropout(0.2))
-model.add(Dense(input_dim=lstm_hdim, output_dim=lstm_hdim + 1000))
-model.add(ELU())
-model.add(Dropout(0.2))
-model.add(Dense(input_dim=lstm_hdim + 1000, output_dim=len(wordCoding)))
-model.add(Activation('softmax'))
 
-model.compile(loss='categorical_crossentropy', optimizer='rmsprop')
+layerNames = [
+    'tdd1',
+    'bn1',
+    'lstm1',
+    'bn2',
+    'lstm2',
+    'bn3',
+    'lstm3',
+    'bn4',
+    'dropout1',
+    'dense1',
+    'denseelu1',
+    'dropout2',
+    'dense2',
+    'densesm1',
+]
+
+model = Graph()
+model.add_input(name='input', input_shape=(sd_len, input_dim))
+model.add_node(TimeDistributedDense(input_dim=input_dim, output_dim=lstm_hdim, input_length=sd_len), name=layerNames[0], input='input')
+model.add_node(BatchNormalization(), name=layerNames[1], input=layerNames[0])
+
+model.add_node(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=True), name=layerNames[2] + 'left', input=layerNames[1])
+model.add_node(BatchNormalization(), name=layerNames[3] + 'left', input=layerNames[2] + 'left')
+
+model.add_node(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=True, go_backwards=True), name=layerNames[2] + 'right', input=layerNames[1])
+model.add_node(BatchNormalization(), name=layerNames[3] + 'right', input=layerNames[2] + 'right')
+
+model.add_node(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=False), name=layerNames[6] + 'left', input=layerNames[3] + 'left')
+
+model.add_node(LSTM(input_dim=lstm_hdim, output_dim=lstm_hdim, return_sequences=False, go_backwards=True), name=layerNames[6] + 'right', input=layerNames[3] + 'right')
+
+model.add_node(BatchNormalization(), name=layerNames[7], inputs=[layerNames[6] + 'left', layerNames[6] + 'right'])
+model.add_node(Dropout(0.2), name=layerNames[8], input=layerNames[7])
+
+model.add_node(Dense(input_dim=bridge_dim, output_dim=dense_dim), name=layerNames[9], input=layerNames[8])
+model.add_node(ELU(), name=layerNames[10], input=layerNames[9])
+model.add_node(Dropout(0.2), name=layerNames[11], input=layerNames[10])
+
+model.add_node(Dense(input_dim=dense_dim, output_dim=len(wordCoding)), name=layerNames[12], input=layerNames[11])
+model.add_node(Activation('softmax'), name=layerNames[13], input=layerNames[12])
+model.add_output(name='output1', input=layerNames[13])
+
+model.compile(optimizer='rmsprop', loss={'output1':'categorical_crossentropy'})
 
 
 def sample(a, temperature=1.0):
@@ -129,18 +192,20 @@ if os.path.isfile('tb-weights'):
 for iteration in range(0, 50):
     print()
     print('-' * 50)
-    print('Iteration', iteration)
-    for k in range(5):
-        print('we at ' + str(k))
-        model.fit(x_D, y_D, batch_size=batch_size, nb_epoch=1, show_accuracy=True)
-    
+    for j in range(2):
+        model.fit({'input':x_D, 'output1':y_D}, nb_epoch=5)
+        model.save_weights('tb-weights', overwrite=True)
+
+    preds = model.predict({'input': x_D[:5000]}, verbose=0)
+    train_accuracy = np.mean(np.equal(np.argmax(y_D[:5000], axis=-1), np.argmax(preds['output1'][:5000], axis=-1)))
+    print(train_accuracy)
+
     seedSelector = np.random.randint(0,3)
     seedSrc = i_D
     seedLen = sd_len
-    model.save_weights('tb-weights', overwrite=True)
     start_index = random.randint(0, len(seedSrc) - 1)
 
-    for diversity in [0.5, 1.0, 1.5]:
+    for diversity in [0.1, 0.2, 0.3, 0.4, 0.5]:
         print()
         print('----- diversity:', diversity)
 
@@ -151,9 +216,9 @@ for iteration in range(0, 50):
         for iteration in range(500):
             vecsentence = []
             for vcode in sentence[0]:
-                vecsentence.append(vmodel[codedWord[vcode]])
+                vecsentence.append(vecValues[codedWord[vcode]])
             vecsentence = np.reshape(vecsentence, (1, len(vecsentence), 300))
-            preds = model.predict(vecsentence, verbose=0)[0]
+            preds = model.predict({'input':vecsentence}, verbose=0)['output1'][0]
             next_index = sample(preds, diversity)
             if next_index in codedWord:
                 next_char = codedWord[next_index]
